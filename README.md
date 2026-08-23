@@ -1,21 +1,31 @@
 # 🌍 World Breaking News Bot
 
-Automatic Telegram breaking-news system that:
+A Telegram news automation bot that collects news from RSS feeds,
+formats the stories, prevents duplicate posts, and automatically
+publishes new stories to every Telegram channel registered by the admin.
 
-- Fetches news from multiple RSS feeds
-- Detects different news categories
-- Prevents duplicate posts
-- Formats stories for Telegram
-- Publishes new stories automatically
-- Provides a Telegram news-alert bot
-- Lets users enable or disable personal alerts
-- Stores users and posted articles in SQLite
-- Runs continuously on Railway
+## ✨ Features
 
-## 📁 Project Files
+- 🌍 World news collection
+- 🚨 Automatic breaking-news publishing
+- 📰 Multiple RSS sources
+- 🔄 Duplicate prevention
+- 📢 Supports 100+ Telegram channels
+- ➕ Add channels directly through Telegram
+- ❌ Remove channels directly through Telegram
+- 🔴 Temporarily disable channels
+- 🟢 Re-enable channels
+- 📋 View all registered channels
+- 🔔 Personal user alerts
+- 🗃️ SQLite database
+- ☁️ Railway compatible
+- 🔐 Bot token kept in environment variables
+
+## 📁 Files
 
 ```text
 WorldBreakingNewsBot/
+│
 ├── main.py
 ├── bot.py
 ├── config.py
