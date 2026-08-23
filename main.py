@@ -3,6 +3,7 @@ import logging
 from contextlib import suppress
 
 from aiogram import Bot
+from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 
 from bot import dp, register_admin_handlers
 from config import (
@@ -37,14 +38,48 @@ logger = logging.getLogger(__name__)
 # POSTING SETTINGS
 # ==========================================================
 
-# Delay between individual channel sends.
 CHANNEL_SEND_DELAY = 0.15
-
-# Number of times to retry a failed Telegram request.
 MAX_RETRIES = 3
-
-# Delay before retrying a failed request.
 RETRY_BASE_DELAY = 2.0
+
+
+# ==========================================================
+# NORMALIZE CHANNEL
+# ==========================================================
+
+def normalize_channel(channel_id) -> str:
+    """
+    Convert common channel formats into a Telegram-compatible value.
+
+    Examples:
+        @mychannel
+        mychannel
+        -1001234567890
+        https://t.me/mychannel
+    """
+
+    if channel_id is None:
+        return ""
+
+    value = str(channel_id).strip()
+
+    if not value:
+        return ""
+
+    # Numeric Telegram channel ID
+    if value.startswith("-100"):
+        return value
+
+    # Telegram URL
+    if "t.me/" in value:
+        value = value.split("t.me/", 1)[1]
+        value = value.split("?", 1)[0]
+        value = value.split("/", 1)[0]
+
+    if value.startswith("@"):
+        return value
+
+    return f"@{value}"
 
 
 # ==========================================================
@@ -58,13 +93,80 @@ async def send_article_to_channel(
     message: str,
 ) -> bool:
     """
-    Send an article to one channel.
-
-    The database is updated only after Telegram confirms
-    that the message was successfully sent.
+    Resolve the channel first, then send using Telegram's
+    real chat ID. This prevents PEER_ID_INVALID caused by
+    bad/old channel references.
     """
 
-    channel_id = str(channel_id)
+    stored_channel = str(channel_id).strip()
+
+    # ------------------------------------------------------
+    # NORMALIZE CHANNEL
+    # ------------------------------------------------------
+
+    channel = normalize_channel(
+        stored_channel
+    )
+
+    if not channel:
+
+        logger.error(
+            "Invalid empty channel reference: %r",
+            stored_channel,
+        )
+
+        return False
+
+    # ------------------------------------------------------
+    # RESOLVE CHANNEL THROUGH TELEGRAM
+    # ------------------------------------------------------
+
+    try:
+
+        chat = await bot.get_chat(
+            chat_id=channel
+        )
+
+        real_chat_id = chat.id
+
+        logger.info(
+            "CHANNEL RESOLVED | stored=%s | telegram_id=%s | title=%s | username=%s",
+            stored_channel,
+            real_chat_id,
+            getattr(chat, "title", ""),
+            getattr(chat, "username", ""),
+        )
+
+    except TelegramBadRequest as exc:
+
+        logger.error(
+            "CHANNEL RESOLUTION FAILED | stored=%s | normalized=%s | error=%s",
+            stored_channel,
+            channel,
+            exc,
+        )
+
+        return False
+
+    except TelegramForbiddenError as exc:
+
+        logger.error(
+            "CHANNEL ACCESS DENIED | stored=%s | error=%s",
+            stored_channel,
+            exc,
+        )
+
+        return False
+
+    except Exception as exc:
+
+        logger.exception(
+            "UNEXPECTED CHANNEL RESOLUTION ERROR | stored=%s | error=%s",
+            stored_channel,
+            exc,
+        )
+
+        return False
 
     # ------------------------------------------------------
     # DUPLICATE CHECK
@@ -72,8 +174,15 @@ async def send_article_to_channel(
 
     if db.news_exists(
         article.article_id,
-        channel_id,
+        str(real_chat_id),
     ):
+
+        logger.info(
+            "ALREADY POSTED | channel=%s | title=%s",
+            real_chat_id,
+            article.title,
+        )
+
         return True
 
     # ------------------------------------------------------
@@ -87,20 +196,24 @@ async def send_article_to_channel(
 
         try:
 
+            # ------------------------------------------------
+            # SEND USING REAL TELEGRAM CHAT ID
+            # ------------------------------------------------
+
             await bot.send_message(
-                chat_id=channel_id,
+                chat_id=real_chat_id,
                 text=message,
                 parse_mode="HTML",
                 disable_web_page_preview=False,
             )
 
             # ------------------------------------------------
-            # SAVE SUCCESS
+            # SAVE ONLY AFTER SUCCESS
             # ------------------------------------------------
 
             db.add_news(
                 article_id=article.article_id,
-                channel_id=channel_id,
+                channel_id=str(real_chat_id),
                 title=article.title,
                 link=article.link,
                 source=article.source,
@@ -109,17 +222,56 @@ async def send_article_to_channel(
 
             logger.info(
                 "POSTED | channel=%s | title=%s",
-                channel_id,
+                real_chat_id,
                 article.title,
             )
 
             return True
 
+        except TelegramBadRequest as exc:
+
+            error_text = str(exc)
+
+            logger.warning(
+                "TELEGRAM BAD REQUEST | channel=%s | attempt=%d/%d | error=%s",
+                real_chat_id,
+                attempt,
+                MAX_RETRIES,
+                error_text,
+            )
+
+            # Do not waste retries on an invalid peer.
+            if "PEER_ID_INVALID" in error_text:
+
+                logger.error(
+                    "PEER_ID_INVALID | stored=%s | resolved=%s",
+                    stored_channel,
+                    real_chat_id,
+                )
+
+                return False
+
+            if attempt < MAX_RETRIES:
+
+                await asyncio.sleep(
+                    RETRY_BASE_DELAY * attempt
+                )
+
+        except TelegramForbiddenError as exc:
+
+            logger.error(
+                "BOT HAS NO PERMISSION TO POST | channel=%s | error=%s",
+                real_chat_id,
+                exc,
+            )
+
+            return False
+
         except Exception as exc:
 
             logger.warning(
                 "POST FAILED | channel=%s | attempt=%d/%d | error=%s",
-                channel_id,
+                real_chat_id,
                 attempt,
                 MAX_RETRIES,
                 exc,
@@ -133,7 +285,7 @@ async def send_article_to_channel(
 
     logger.error(
         "FAILED PERMANENTLY | channel=%s | title=%s",
-        channel_id,
+        real_chat_id,
         article.title,
     )
 
@@ -149,7 +301,7 @@ async def publish_article(
     article,
 ):
     """
-    Send one article to every currently enabled channel.
+    Send one article to every enabled channel.
     """
 
     channels = db.get_channel_ids(
@@ -165,11 +317,12 @@ async def publish_article(
         return
 
     # ------------------------------------------------------
-    # FIND CHANNELS THAT ALREADY RECEIVED ARTICLE
+    # FIND CHANNELS ALREADY POSTED
     # ------------------------------------------------------
 
     posted_channels = set(
-        db.get_posted_channels(
+        str(channel)
+        for channel in db.get_posted_channels(
             article.article_id
         )
     )
@@ -196,7 +349,7 @@ async def publish_article(
     )
 
     # ------------------------------------------------------
-    # FORMAT ONCE
+    # FORMAT MESSAGE
     # ------------------------------------------------------
 
     message = format_news_post(
@@ -207,7 +360,7 @@ async def publish_article(
     failed = 0
 
     # ------------------------------------------------------
-    # SEND TO EACH CHANNEL
+    # SEND TO CHANNELS
     # ------------------------------------------------------
 
     for channel_id in remaining_channels:
@@ -272,9 +425,9 @@ async def news_publishing_loop(
                 channel_count,
             )
 
-            # --------------------------------------------------
-            # NO CHANNELS YET
-            # --------------------------------------------------
+            # ------------------------------------------------
+            # NO CHANNELS
+            # ------------------------------------------------
 
             if channel_count == 0:
 
@@ -283,9 +436,9 @@ async def news_publishing_loop(
                     "Use /addchannel @Channel from the admin account."
                 )
 
-            # --------------------------------------------------
+            # ------------------------------------------------
             # FETCH NEWS
-            # --------------------------------------------------
+            # ------------------------------------------------
 
             logger.info(
                 "Checking news sources..."
@@ -306,14 +459,12 @@ async def news_publishing_loop(
                     len(articles),
                 )
 
-                # --------------------------------------------------
+                # ------------------------------------------------
                 # PROCESS EACH ARTICLE
-                # --------------------------------------------------
+                # ------------------------------------------------
 
                 for article in articles:
 
-                    # If no channels have been configured,
-                    # there is no reason to process the article.
                     if channel_count == 0:
                         break
 
@@ -322,12 +473,13 @@ async def news_publishing_loop(
                         article=article,
                     )
 
-                    # Small pause before processing the next story.
-                    await asyncio.sleep(1)
+                    await asyncio.sleep(
+                        1
+                    )
 
-            # --------------------------------------------------
-            # CLEAN OLD POST RECORDS
-            # --------------------------------------------------
+            # ------------------------------------------------
+            # CLEAN OLD DATABASE RECORDS
+            # ------------------------------------------------
 
             try:
 
@@ -350,7 +502,7 @@ async def news_publishing_loop(
             )
 
         # ------------------------------------------------------
-        # WAIT FOR NEXT CHECK
+        # WAIT BEFORE NEXT CHECK
         # ------------------------------------------------------
 
         await asyncio.sleep(
@@ -377,7 +529,7 @@ async def main():
     )
 
     # ------------------------------------------------------
-    # REGISTER ADMIN SYSTEM
+    # REGISTER ADMIN HANDLERS
     # ------------------------------------------------------
 
     if ADMIN_ID:
@@ -468,7 +620,7 @@ async def main():
             await news_task
 
         # --------------------------------------------------
-        # CLOSE TELEGRAM CONNECTION
+        # CLOSE TELEGRAM SESSION
         # --------------------------------------------------
 
         await bot.session.close()
