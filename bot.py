@@ -3,7 +3,7 @@ import html
 import logging
 from typing import Optional
 
-from aiogram import Bot, Dispatcher, F
+from aiogram import Dispatcher, F
 from aiogram.filters import Command, CommandStart
 from aiogram.types import (
     CallbackQuery,
@@ -62,6 +62,12 @@ def main_keyboard() -> InlineKeyboardMarkup:
             ],
             [
                 InlineKeyboardButton(
+                    text="📢 News Channel",
+                    callback_data="channel_info",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
                     text="ℹ️ Help",
                     callback_data="help",
                 ),
@@ -71,7 +77,7 @@ def main_keyboard() -> InlineKeyboardMarkup:
 
 
 # ==========================================================
-# START COMMAND
+# START
 # ==========================================================
 
 @dp.message(CommandStart())
@@ -86,19 +92,18 @@ async def start_handler(message: Message):
 
     first_name = (
         message.from_user.first_name
-        or ""
+        or "there"
     )
 
     await message.answer(
-        format_welcome_message(
-            first_name
-        ),
+        format_welcome_message(first_name),
         reply_markup=main_keyboard(),
+        parse_mode="HTML",
     )
 
 
 # ==========================================================
-# HELP COMMAND
+# HELP
 # ==========================================================
 
 @dp.message(Command("help"))
@@ -107,19 +112,18 @@ async def help_handler(message: Message):
     await message.answer(
         format_help_message(),
         reply_markup=main_keyboard(),
+        parse_mode="HTML",
     )
 
 
 # ==========================================================
-# LATEST NEWS COMMAND
+# NEWS
 # ==========================================================
 
 @dp.message(Command("news"))
 async def news_handler(message: Message):
 
-    await send_latest_news(
-        message
-    )
+    await send_latest_news(message)
 
 
 # ==========================================================
@@ -142,6 +146,7 @@ async def enable_alerts_handler(
     await message.answer(
         format_alert_status(True),
         reply_markup=main_keyboard(),
+        parse_mode="HTML",
     )
 
 
@@ -164,11 +169,12 @@ async def disable_alerts_handler(
     await message.answer(
         format_alert_status(False),
         reply_markup=main_keyboard(),
+        parse_mode="HTML",
     )
 
 
 # ==========================================================
-# LATEST NEWS
+# GET LATEST NEWS
 # ==========================================================
 
 async def send_latest_news(
@@ -186,20 +192,19 @@ async def send_latest_news(
                 "right now.</b>\n\n"
                 "Please try again shortly.",
                 reply_markup=main_keyboard(),
+                parse_mode="HTML",
             )
 
             return
 
-        # Do not flood the user.
         articles = articles[:5]
 
         for article in articles:
 
             await message.answer(
-                format_user_news(
-                    article
-                ),
+                format_user_news(article),
                 disable_web_page_preview=False,
+                parse_mode="HTML",
             )
 
             await asyncio.sleep(0.5)
@@ -207,6 +212,7 @@ async def send_latest_news(
         await message.answer(
             "✅ <b>That's the latest available news.</b>",
             reply_markup=main_keyboard(),
+            parse_mode="HTML",
         )
 
     except Exception as exc:
@@ -221,16 +227,15 @@ async def send_latest_news(
             "news right now.</b>\n\n"
             "Please try again shortly.",
             reply_markup=main_keyboard(),
+            parse_mode="HTML",
         )
 
 
 # ==========================================================
-# USER NEWS FORMAT
+# FORMAT USER NEWS
 # ==========================================================
 
-def format_user_news(
-    article,
-) -> str:
+def format_user_news(article) -> str:
 
     title = html.escape(
         article.title or ""
@@ -250,11 +255,10 @@ def format_user_news(
     )
 
     if len(summary) > 700:
+
         summary = (
-            summary[:697].rsplit(
-                " ",
-                1
-            )[0]
+            summary[:697]
+            .rsplit(" ", 1)[0]
             + "..."
         )
 
@@ -328,6 +332,7 @@ async def enable_alerts_callback(
         await callback.message.answer(
             format_alert_status(True),
             reply_markup=main_keyboard(),
+            parse_mode="HTML",
         )
 
 
@@ -356,6 +361,7 @@ async def disable_alerts_callback(
         await callback.message.answer(
             format_alert_status(False),
             reply_markup=main_keyboard(),
+            parse_mode="HTML",
         )
 
 
@@ -377,6 +383,37 @@ async def help_callback(
         await callback.message.answer(
             format_help_message(),
             reply_markup=main_keyboard(),
+            parse_mode="HTML",
+        )
+
+
+# ==========================================================
+# CHANNEL INFO BUTTON
+# ==========================================================
+
+@dp.callback_query(
+    F.data == "channel_info"
+)
+async def channel_info_callback(
+    callback: CallbackQuery,
+):
+
+    await callback.answer()
+
+    if callback.message:
+
+        channel_count = db.get_channel_count(
+            enabled_only=True
+        )
+
+        await callback.message.answer(
+            "📢 <b>World Breaking News</b>\n\n"
+            f"📰 Active publishing channels: "
+            f"<b>{channel_count}</b>\n\n"
+            "The bot automatically sends new news "
+            "to all active channels registered by "
+            "the administrator.",
+            parse_mode="HTML",
         )
 
 
@@ -396,7 +433,7 @@ def is_admin(message: Message) -> bool:
 
 
 # ==========================================================
-# EXTRACT COMMAND ARGUMENT
+# COMMAND ARGUMENT
 # ==========================================================
 
 def get_command_argument(
@@ -422,7 +459,7 @@ def get_command_argument(
 
 
 # ==========================================================
-# NORMALIZE CHANNEL INPUT
+# NORMALIZE CHANNEL
 # ==========================================================
 
 def normalize_channel_input(
@@ -431,7 +468,6 @@ def normalize_channel_input(
 
     value = value.strip()
 
-    # Remove Telegram URL formats if the admin pastes one.
     value = value.replace(
         "https://t.me/",
         "",
@@ -447,12 +483,9 @@ def normalize_channel_input(
     if value.startswith("@"):
         return value
 
-    # Numeric IDs remain numeric.
     if value.startswith("-100"):
         return value
 
-    # If someone enters a plain public username,
-    # convert it to @username.
     return f"@{value}"
 
 
@@ -480,11 +513,11 @@ async def add_channel_handler(
     if not channel_input:
 
         await message.answer(
-            "❌ Please provide a channel username or ID.\n\n"
-            "<b>Example:</b>\n"
-            "<code>/addchannel @MyNewsChannel</code>\n\n"
-            "You can also use a numeric channel ID:\n"
-            "<code>/addchannel -1001234567890</code>"
+            "❌ <b>Send the channel username after "
+            "the command.</b>\n\n"
+            "Example:\n"
+            "<code>/addchannel @YourChannel</code>",
+            parse_mode="HTML",
         )
 
         return
@@ -499,17 +532,9 @@ async def add_channel_handler(
 
     try:
 
-        # --------------------------------------------------
-        # GET CHANNEL INFORMATION
-        # --------------------------------------------------
-
         chat = await message.bot.get_chat(
             channel_input
         )
-
-        # --------------------------------------------------
-        # CHECK BOT'S ADMIN STATUS
-        # --------------------------------------------------
 
         bot_user = await message.bot.get_me()
 
@@ -517,10 +542,6 @@ async def add_channel_handler(
             chat_id=chat.id,
             user_id=bot_user.id,
         )
-
-        # --------------------------------------------------
-        # CHECK ADMIN RIGHTS
-        # --------------------------------------------------
 
         is_creator = (
             bot_member.status == "creator"
@@ -546,16 +567,13 @@ async def add_channel_handler(
 
             await status_message.edit_text(
                 "❌ <b>The bot cannot post in this channel.</b>\n\n"
-                "Add this bot as an administrator of the channel "
+                "Add this bot as an administrator "
                 "and give it permission to post messages.\n\n"
-                f"Channel: <code>{html.escape(str(chat.id))}</code>"
+                f"Channel ID: <code>{chat.id}</code>",
+                parse_mode="HTML",
             )
 
             return
-
-        # --------------------------------------------------
-        # SAVE CHANNEL
-        # --------------------------------------------------
 
         username = getattr(
             chat,
@@ -565,66 +583,50 @@ async def add_channel_handler(
 
         if username:
             username = f"@{username}"
-
         else:
             username = ""
 
-        was_added = db.add_channel(
+        db.add_channel(
             channel_id=str(chat.id),
             channel_username=username,
         )
 
-        # --------------------------------------------------
-        # SUCCESS MESSAGE
-        # --------------------------------------------------
-
-        display_name = (
-            html.escape(
-                chat.title
-                or "Unnamed Channel"
-            )
+        display_name = html.escape(
+            chat.title
+            or "Unnamed Channel"
         )
 
-        if was_added:
+        total = db.get_channel_count(
+            enabled_only=True
+        )
 
-            await status_message.edit_text(
-                "✅ <b>Channel added successfully!</b>\n\n"
-                f"📢 <b>Name:</b> {display_name}\n"
-                f"🆔 <b>ID:</b> <code>{chat.id}</code>\n"
-                f"🔗 <b>Username:</b> "
-                f"<code>{html.escape(username or 'Private channel')}</code>\n\n"
-                "📰 New news will now be sent to this channel.\n\n"
-                f"📊 Total active channels: "
-                f"<b>{db.get_channel_count()}</b>"
-            )
-
-        else:
-
-            await status_message.edit_text(
-                "✅ <b>This channel is already registered.</b>\n\n"
-                f"📢 <b>Name:</b> {display_name}\n"
-                f"🆔 <b>ID:</b> <code>{chat.id}</code>\n\n"
-                f"📊 Total active channels: "
-                f"<b>{db.get_channel_count()}</b>"
-            )
+        await status_message.edit_text(
+            "✅ <b>Channel added successfully!</b>\n\n"
+            f"📢 <b>Name:</b> {display_name}\n"
+            f"🆔 <b>ID:</b> <code>{chat.id}</code>\n"
+            f"🔗 <b>Username:</b> "
+            f"<code>{html.escape(username or 'Private channel')}</code>\n\n"
+            "📰 New news will now be sent to this channel.\n\n"
+            f"📊 <b>Active channels:</b> {total}",
+            parse_mode="HTML",
+        )
 
     except Exception as exc:
 
         logger.exception(
-            "Failed to add channel %s: %s",
-            channel_input,
+            "Failed to add channel: %s",
             exc,
         )
 
         await status_message.edit_text(
             "❌ <b>Could not add this channel.</b>\n\n"
-            "Make sure:\n"
-            "• The channel username/ID is correct.\n"
+            "Check that:\n"
             "• The channel exists.\n"
-            "• The bot has been added to the channel.\n"
+            "• The username is correct.\n"
+            "• The bot is in the channel.\n"
             "• The bot is an administrator.\n"
-            "• The bot can post messages.\n\n"
-            f"Error: <code>{html.escape(str(exc))}</code>"
+            "• The bot can post messages.",
+            parse_mode="HTML",
         )
 
 
@@ -640,7 +642,7 @@ async def channels_handler(
     if not is_admin(message):
 
         await message.answer(
-            "❌ You are not authorized to view the channel list."
+            "❌ You are not authorized."
         )
 
         return
@@ -654,58 +656,18 @@ async def channels_handler(
         await message.answer(
             "📢 <b>No channels have been added yet.</b>\n\n"
             "Use:\n"
-            "<code>/addchannel @YourChannel</code>"
+            "<code>/addchannel @YourChannel</code>",
+            parse_mode="HTML",
         )
 
         return
 
-    lines = [
-        "📢 <b>Managed Channels</b>",
-        "",
-        f"Total: <b>{len(channels)}</b>",
-        "",
-    ]
-
-    for index, channel in enumerate(
-        channels,
-        start=1,
-    ):
-
-        username = (
-            channel["channel_username"]
-            or "Private/ID channel"
-        )
-
-        status = (
-            "✅"
-            if channel["enabled"]
-            else "🔴"
-        )
-
-        lines.append(
-            f"{index}. {status} "
-            f"<b>{html.escape(username)}</b>\n"
-            f"   🆔 <code>{html.escape(str(channel['channel_id']))}</code>"
-        )
-
-    # Telegram message limit protection.
-    full_text = "\n\n".join(
-        lines
-    )
-
-    if len(full_text) <= 4000:
-
-        await message.answer(
-            full_text
-        )
-
-        return
-
-    # Send in chunks for large lists.
-    current = (
+    header = (
         "📢 <b>Managed Channels</b>\n\n"
         f"Total: <b>{len(channels)}</b>\n\n"
     )
+
+    current = header
 
     for index, channel in enumerate(
         channels,
@@ -726,16 +688,14 @@ async def channels_handler(
         line = (
             f"{index}. {status} "
             f"<b>{html.escape(username)}</b>\n"
-            f"   🆔 <code>{html.escape(str(channel['channel_id']))}</code>\n\n"
+            f"🆔 <code>{html.escape(str(channel['channel_id']))}</code>\n\n"
         )
 
-        if (
-            len(current) + len(line)
-            > 3800
-        ):
+        if len(current) + len(line) > 3800:
 
             await message.answer(
-                current
+                current,
+                parse_mode="HTML",
             )
 
             current = ""
@@ -745,7 +705,8 @@ async def channels_handler(
     if current:
 
         await message.answer(
-            current
+            current,
+            parse_mode="HTML",
         )
 
 
@@ -761,7 +722,7 @@ async def remove_channel_handler(
     if not is_admin(message):
 
         await message.answer(
-            "❌ You are not authorized to manage channels."
+            "❌ You are not authorized."
         )
 
         return
@@ -773,9 +734,9 @@ async def remove_channel_handler(
     if not channel_input:
 
         await message.answer(
-            "❌ Please provide the channel username or ID.\n\n"
-            "<b>Example:</b>\n"
-            "<code>/removechannel @MyNewsChannel</code>"
+            "Example:\n"
+            "<code>/removechannel @YourChannel</code>",
+            parse_mode="HTML",
         )
 
         return
@@ -785,10 +746,6 @@ async def remove_channel_handler(
     )
 
     try:
-
-        # --------------------------------------------------
-        # Resolve the username/ID to Telegram's real ID.
-        # --------------------------------------------------
 
         chat = await message.bot.get_chat(
             channel_input
@@ -804,29 +761,28 @@ async def remove_channel_handler(
                 "✅ <b>Channel removed.</b>\n\n"
                 f"📢 {html.escape(chat.title or 'Channel')}\n"
                 f"🆔 <code>{chat.id}</code>\n\n"
-                "New news will no longer be sent to this channel.\n\n"
                 f"📊 Active channels remaining: "
-                f"<b>{db.get_channel_count()}</b>"
+                f"<b>{db.get_channel_count()}</b>",
+                parse_mode="HTML",
             )
 
         else:
 
             await message.answer(
-                "ℹ️ This channel was not registered.\n\n"
-                f"🆔 <code>{chat.id}</code>"
+                "ℹ️ This channel was not registered.",
+                parse_mode="HTML",
             )
 
     except Exception as exc:
 
         logger.exception(
-            "Failed to remove channel %s: %s",
-            channel_input,
+            "Failed to remove channel: %s",
             exc,
         )
 
         await message.answer(
-            "❌ Could not find or remove this channel.\n\n"
-            f"Error: <code>{html.escape(str(exc))}</code>"
+            "❌ Could not find or remove this channel.",
+            parse_mode="HTML",
         )
 
 
@@ -842,7 +798,7 @@ async def disable_channel_handler(
     if not is_admin(message):
 
         await message.answer(
-            "❌ You are not authorized to manage channels."
+            "❌ You are not authorized."
         )
 
         return
@@ -854,8 +810,9 @@ async def disable_channel_handler(
     if not channel_input:
 
         await message.answer(
-            "❌ Example:\n"
-            "<code>/disablechannel @MyNewsChannel</code>"
+            "Example:\n"
+            "<code>/disablechannel @YourChannel</code>",
+            parse_mode="HTML",
         )
 
         return
@@ -879,26 +836,23 @@ async def disable_channel_handler(
             await message.answer(
                 "🔴 <b>Channel disabled.</b>\n\n"
                 f"📢 {html.escape(chat.title or 'Channel')}\n\n"
-                "The bot will keep the channel in its database "
-                "but will temporarily stop sending news to it."
+                "New news will no longer be sent to it "
+                "until you enable it again.",
+                parse_mode="HTML",
             )
 
         else:
 
             await message.answer(
-                "ℹ️ This channel is not currently registered."
+                "ℹ️ This channel is not registered.",
+                parse_mode="HTML",
             )
 
-    except Exception as exc:
-
-        logger.exception(
-            "Failed to disable channel: %s",
-            exc,
-        )
+    except Exception:
 
         await message.answer(
-            "❌ Could not disable this channel.\n\n"
-            f"Error: <code>{html.escape(str(exc))}</code>"
+            "❌ Could not disable this channel.",
+            parse_mode="HTML",
         )
 
 
@@ -914,7 +868,7 @@ async def enable_channel_handler(
     if not is_admin(message):
 
         await message.answer(
-            "❌ You are not authorized to manage channels."
+            "❌ You are not authorized."
         )
 
         return
@@ -926,8 +880,9 @@ async def enable_channel_handler(
     if not channel_input:
 
         await message.answer(
-            "❌ Example:\n"
-            "<code>/enablechannel @MyNewsChannel</code>"
+            "Example:\n"
+            "<code>/enablechannel @YourChannel</code>",
+            parse_mode="HTML",
         )
 
         return
@@ -949,34 +904,31 @@ async def enable_channel_handler(
         if enabled:
 
             await message.answer(
-                "✅ <b>Channel enabled.</b>\n\n"
+                "🟢 <b>Channel enabled.</b>\n\n"
                 f"📢 {html.escape(chat.title or 'Channel')}\n\n"
-                "New news will be sent to this channel again."
+                "New news will be sent to this channel again.",
+                parse_mode="HTML",
             )
 
         else:
 
             await message.answer(
-                "ℹ️ This channel is not currently registered.\n\n"
+                "ℹ️ This channel is not registered.\n\n"
                 "Use:\n"
-                f"<code>/addchannel {html.escape(channel_input)}</code>"
+                f"<code>/addchannel {html.escape(channel_input)}</code>",
+                parse_mode="HTML",
             )
 
-    except Exception as exc:
-
-        logger.exception(
-            "Failed to enable channel: %s",
-            exc,
-        )
+    except Exception:
 
         await message.answer(
-            "❌ Could not enable this channel.\n\n"
-            f"Error: <code>{html.escape(str(exc))}</code>"
+            "❌ Could not enable this channel.",
+            parse_mode="HTML",
         )
 
 
 # ==========================================================
-# ADMIN STATS
+# STATS
 # ==========================================================
 
 @dp.message(Command("stats"))
@@ -987,26 +939,27 @@ async def stats_handler(
     if not is_admin(message):
 
         await message.answer(
-            "❌ You are not authorized to use this command."
+            "❌ You are not authorized."
         )
 
         return
 
     user_count = db.get_user_count()
 
-    channel_count = db.get_channel_count(
+    active_channels = db.get_channel_count(
         enabled_only=True
     )
 
-    all_channel_count = db.get_channel_count(
+    all_channels = db.get_channel_count(
         enabled_only=False
     )
 
     await message.answer(
         "📊 <b>Bot Statistics</b>\n\n"
         f"👥 Users: <b>{user_count}</b>\n"
-        f"📢 Active channels: <b>{channel_count}</b>\n"
-        f"📚 Stored channels: <b>{all_channel_count}</b>"
+        f"📢 Active channels: <b>{active_channels}</b>\n"
+        f"📚 Stored channels: <b>{all_channels}</b>",
+        parse_mode="HTML",
     )
 
 
@@ -1034,35 +987,30 @@ async def admin_help_handler(
         "Add a channel.\n\n"
 
         "📋 <code>/channels</code>\n"
-        "Show all registered channels.\n\n"
+        "Show registered channels.\n\n"
 
         "❌ <code>/removechannel @Channel</code>\n"
-        "Remove a channel permanently.\n\n"
+        "Remove a channel.\n\n"
 
         "🔴 <code>/disablechannel @Channel</code>\n"
-        "Temporarily stop posting to a channel.\n\n"
+        "Temporarily stop posting.\n\n"
 
         "🟢 <code>/enablechannel @Channel</code>\n"
-        "Resume posting to a disabled channel.\n\n"
+        "Resume posting.\n\n"
 
         "📊 <code>/stats</code>\n"
-        "Show users and channel statistics."
+        "Show statistics.",
+        parse_mode="HTML",
     )
 
 
 # ==========================================================
-# REGISTER ADMIN HANDLERS
+# COMPATIBILITY FUNCTION FOR main.py
 # ==========================================================
 
 def register_admin_handlers(
     admin_id: int,
 ):
-    """
-    Kept for compatibility with main.py.
-
-    Admin commands are registered directly above,
-    and authorization is checked against ADMIN_ID.
-    """
 
     logger.info(
         "Admin system enabled for user ID %s",
@@ -1075,7 +1023,7 @@ def register_admin_handlers(
 # ==========================================================
 
 async def run_bot(
-    bot: Bot,
+    bot,
 ):
 
     logger.info(
