@@ -1,7 +1,12 @@
 import os
+
 from dotenv import load_dotenv
 
-# Load environment variables from .env
+
+# ==========================================================
+# LOAD ENVIRONMENT VARIABLES
+# ==========================================================
+
 load_dotenv()
 
 
@@ -9,11 +14,15 @@ load_dotenv()
 # TELEGRAM BOT
 # ==========================================================
 
-BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
+BOT_TOKEN = os.getenv(
+    "BOT_TOKEN",
+    ""
+).strip()
 
 if not BOT_TOKEN:
     raise ValueError(
-        "BOT_TOKEN is missing. Add your Telegram bot token to the .env file."
+        "BOT_TOKEN is missing. "
+        "Add BOT_TOKEN to your Railway Variables."
     )
 
 
@@ -21,35 +30,103 @@ if not BOT_TOKEN:
 # ADMIN
 # ==========================================================
 
-ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
+ADMIN_ID_RAW = os.getenv(
+    "ADMIN_ID",
+    "0"
+).strip()
+
+try:
+    ADMIN_ID = int(ADMIN_ID_RAW)
+except ValueError:
+    ADMIN_ID = 0
 
 
 # ==========================================================
-# MAIN NEWS CHANNEL
+# 100+ TELEGRAM CHANNELS
 # ==========================================================
 
-NEWS_CHANNEL = os.getenv(
-    "NEWS_CHANNEL",
-    "@WorldBreakingNews247"
+NEWS_CHANNELS_RAW = os.getenv(
+    "NEWS_CHANNELS",
+    ""
 ).strip()
 
 
+def parse_channels(value: str):
+    """
+    Convert a comma-separated channel list into a clean list.
+
+    Examples:
+
+    @channelone,@channeltwo
+
+    or
+
+    -1001234567890,-1009876543210
+    """
+
+    channels = []
+
+    for item in value.split(","):
+
+        channel = item.strip()
+
+        if not channel:
+            continue
+
+        if channel not in channels:
+            channels.append(channel)
+
+    return channels
+
+
+NEWS_CHANNELS = parse_channels(
+    NEWS_CHANNELS_RAW
+)
+
+
+if not NEWS_CHANNELS:
+    raise ValueError(
+        "NEWS_CHANNELS is missing. "
+        "Add at least one Telegram channel username "
+        "or numeric channel ID."
+    )
+
+
 # ==========================================================
-# BOT SETTINGS
+# NEWS CHECK SETTINGS
 # ==========================================================
 
-# How often the bot checks news sources, in seconds.
-CHECK_INTERVAL = int(os.getenv("CHECK_INTERVAL", "30"))
+CHECK_INTERVAL = int(
+    os.getenv(
+        "CHECK_INTERVAL",
+        "30"
+    )
+)
 
-# Maximum number of news articles processed in one feed check.
+if CHECK_INTERVAL < 10:
+    CHECK_INTERVAL = 10
+
+
 MAX_ARTICLES_PER_FEED = int(
-    os.getenv("MAX_ARTICLES_PER_FEED", "10")
+    os.getenv(
+        "MAX_ARTICLES_PER_FEED",
+        "10"
+    )
 )
 
-# Number of articles the bot keeps in its database.
+if MAX_ARTICLES_PER_FEED < 1:
+    MAX_ARTICLES_PER_FEED = 1
+
+
 MAX_STORED_ARTICLES = int(
-    os.getenv("MAX_STORED_ARTICLES", "5000")
+    os.getenv(
+        "MAX_STORED_ARTICLES",
+        "5000"
+    )
 )
+
+if MAX_STORED_ARTICLES < 100:
+    MAX_STORED_ARTICLES = 100
 
 
 # ==========================================================
@@ -80,6 +157,7 @@ NEWS_FEEDS = [
 # ==========================================================
 
 CATEGORY_KEYWORDS = {
+
     "World": [
         "world",
         "international",
@@ -177,44 +255,47 @@ CATEGORY_KEYWORDS = {
 # ==========================================================
 
 CATEGORY_HASHTAGS = {
-    "World": "#WorldNews #BreakingNews",
 
-    "Politics": "#Politics #PoliticalNews",
+    "World":
+        "#WorldNews #BreakingNews",
 
-    "Business": "#Business #BusinessNews",
+    "Politics":
+        "#Politics #PoliticalNews",
 
-    "Technology": "#Technology #TechNews",
+    "Business":
+        "#Business #BusinessNews",
 
-    "Sports": "#Sports #SportsNews",
+    "Technology":
+        "#Technology #TechNews",
 
-    "Science": "#Science #ScienceNews",
+    "Sports":
+        "#Sports #SportsNews",
 
-    "Entertainment": "#Entertainment #EntertainmentNews",
+    "Science":
+        "#Science #ScienceNews",
+
+    "Entertainment":
+        "#Entertainment #EntertainmentNews",
 }
 
 
 # ==========================================================
-# TELEGRAM POST SETTINGS
+# MESSAGE SETTINGS
 # ==========================================================
 
-# Maximum length of a Telegram message.
 MAX_MESSAGE_LENGTH = 4096
 
-# Maximum length used for the generated summary.
 SUMMARY_MAX_LENGTH = 700
 
-# Minimum title length accepted.
 MIN_TITLE_LENGTH = 10
 
 
 # ==========================================================
-# USER BOT SETTINGS
+# USER ALERT SETTINGS
 # ==========================================================
 
-# Whether users can receive breaking-news notifications.
 ENABLE_USER_ALERTS = True
 
-# Maximum number of users stored for alerts.
 MAX_USERS = 100000
 
 
@@ -229,27 +310,32 @@ LOG_LEVEL = os.getenv(
 
 
 # ==========================================================
-# APPLICATION SETTINGS
+# APPLICATION INFORMATION
 # ==========================================================
 
 APP_NAME = "World Breaking News Bot"
-VERSION = "1.0.0"
+
+VERSION = "2.0.0"
 
 
 # ==========================================================
-# VALIDATION
+# CHANNEL INFORMATION
 # ==========================================================
 
-if not NEWS_CHANNEL:
-    raise ValueError(
-        "NEWS_CHANNEL is missing. Add your Telegram channel username."
+CHANNEL_COUNT = len(
+    NEWS_CHANNELS
+)
+
+
+# ==========================================================
+# STARTUP INFORMATION
+# ==========================================================
+
+print(
+    f"Loaded {CHANNEL_COUNT} Telegram channel(s)."
+)
+
+if CHANNEL_COUNT >= 100:
+    print(
+        "100+ channel mode enabled."
     )
-
-if CHECK_INTERVAL < 10:
-    CHECK_INTERVAL = 10
-
-if MAX_ARTICLES_PER_FEED < 1:
-    MAX_ARTICLES_PER_FEED = 1
-
-if MAX_STORED_ARTICLES < 100:
-    MAX_STORED_ARTICLES = 100
