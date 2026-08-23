@@ -1,312 +1,58 @@
-import os
-
-from dotenv import load_dotenv
-
-
-# ==========================================================
-# LOAD ENVIRONMENT VARIABLES
-# ==========================================================
-
-load_dotenv()
-
-
-# ==========================================================
-# TELEGRAM BOT
-# ==========================================================
-
-BOT_TOKEN = os.getenv(
-    "BOT_TOKEN",
-    ""
-).strip()
-
-if not BOT_TOKEN:
-    raise ValueError(
-        "BOT_TOKEN is missing. "
-        "Add BOT_TOKEN to Railway Variables."
-    )
-
-
-# ==========================================================
-# ADMIN
-# ==========================================================
-
-ADMIN_ID_RAW = os.getenv(
-    "ADMIN_ID",
-    "0"
-).strip()
-
 try:
-    ADMIN_ID = int(ADMIN_ID_RAW)
-except ValueError:
-    ADMIN_ID = 0
+    channel = str(channel_id).strip()
 
+    # Convert public channel usernames to Telegram format
+    if not channel.startswith("@") and not channel.startswith("-100"):
+        channel = f"@{channel}"
 
-# ==========================================================
-# NEWS CHECK SETTINGS
-# ==========================================================
+    # Resolve the channel first
+    chat = await bot.get_chat(chat_id=channel)
 
-CHECK_INTERVAL_RAW = os.getenv(
-    "CHECK_INTERVAL",
-    "30"
-).strip()
-
-try:
-    CHECK_INTERVAL = int(
-        CHECK_INTERVAL_RAW
+    # Send using Telegram's real chat ID
+    await bot.send_message(
+        chat_id=chat.id,
+        text=message,
+        parse_mode="HTML",
+        disable_web_page_preview=False,
     )
-except ValueError:
-    CHECK_INTERVAL = 30
 
-if CHECK_INTERVAL < 10:
-    CHECK_INTERVAL = 10
-
-
-MAX_ARTICLES_PER_FEED_RAW = os.getenv(
-    "MAX_ARTICLES_PER_FEED",
-    "10"
-).strip()
-
-try:
-    MAX_ARTICLES_PER_FEED = int(
-        MAX_ARTICLES_PER_FEED_RAW
+    db.add_news(
+        article_id=article.article_id,
+        channel_id=str(chat.id),
+        title=article.title,
+        link=article.link,
+        source=article.source,
+        category=article.category,
     )
-except ValueError:
-    MAX_ARTICLES_PER_FEED = 10
 
-if MAX_ARTICLES_PER_FEED < 1:
-    MAX_ARTICLES_PER_FEED = 1
-
-
-MAX_STORED_ARTICLES_RAW = os.getenv(
-    "MAX_STORED_ARTICLES",
-    "5000"
-).strip()
-
-try:
-    MAX_STORED_ARTICLES = int(
-        MAX_STORED_ARTICLES_RAW
+    logger.info(
+        "POSTED | channel=%s | title=%s",
+        chat.id,
+        article.title,
     )
-except ValueError:
-    MAX_STORED_ARTICLES = 5000
 
-if MAX_STORED_ARTICLES < 100:
-    MAX_STORED_ARTICLES = 100
+    return True
 
-
-# ==========================================================
-# DATABASE
-# ==========================================================
-
-DATABASE_PATH = os.getenv(
-    "DATABASE_PATH",
-    "data/news.db"
-).strip()
-
-if not DATABASE_PATH:
-    DATABASE_PATH = "data/news.db"
-
-
-# ==========================================================
-# RSS NEWS SOURCES
-# ==========================================================
-
-NEWS_FEEDS = [
-    "https://feeds.bbci.co.uk/news/world/rss.xml",
-    "https://feeds.bbci.co.uk/news/rss.xml",
-    "https://rss.nytimes.com/services/xml/rss/nyt/World.xml",
-    "https://feeds.skynews.com/feeds/rss/world.xml",
-    "https://www.theguardian.com/world/rss",
-]
-
-
-# ==========================================================
-# NEWS CATEGORIES
-# ==========================================================
-
-CATEGORY_KEYWORDS = {
-    "World": [
-        "world",
-        "international",
-        "global",
-        "international relations",
-        "diplomatic",
-        "foreign",
-    ],
-
-    "Politics": [
-        "president",
-        "prime minister",
-        "government",
-        "election",
-        "parliament",
-        "senate",
-        "congress",
-        "minister",
-        "political",
-        "politics",
-    ],
-
-    "Business": [
-        "business",
-        "company",
-        "companies",
-        "economy",
-        "economic",
-        "market",
-        "markets",
-        "bank",
-        "banks",
-        "industry",
-        "ceo",
-    ],
-
-    "Technology": [
-        "technology",
-        "tech",
-        "artificial intelligence",
-        "ai",
-        "software",
-        "computer",
-        "smartphone",
-        "internet",
-        "cybersecurity",
-        "google",
-        "apple",
-        "microsoft",
-        "meta",
-    ],
-
-    "Sports": [
-        "football",
-        "soccer",
-        "basketball",
-        "nba",
-        "tennis",
-        "cricket",
-        "formula 1",
-        "f1",
-        "boxing",
-        "ufc",
-        "sports",
-    ],
-
-    "Science": [
-        "science",
-        "scientist",
-        "research",
-        "study",
-        "space",
-        "nasa",
-        "astronomy",
-        "physics",
-        "biology",
-    ],
-
-    "Entertainment": [
-        "movie",
-        "film",
-        "music",
-        "celebrity",
-        "actor",
-        "actress",
-        "singer",
-        "entertainment",
-        "hollywood",
-    ],
-}
-
-
-# ==========================================================
-# HASHTAGS
-# ==========================================================
-
-CATEGORY_HASHTAGS = {
-    "World":
-        "#WorldNews #BreakingNews",
-
-    "Politics":
-        "#Politics #PoliticalNews",
-
-    "Business":
-        "#Business #BusinessNews",
-
-    "Technology":
-        "#Technology #TechNews",
-
-    "Sports":
-        "#Sports #SportsNews",
-
-    "Science":
-        "#Science #ScienceNews",
-
-    "Entertainment":
-        "#Entertainment #EntertainmentNews",
-}
-
-
-# ==========================================================
-# MESSAGE SETTINGS
-# ==========================================================
-
-MAX_MESSAGE_LENGTH = 4096
-
-SUMMARY_MAX_LENGTH = 700
-
-MIN_TITLE_LENGTH = 10
-
-
-# ==========================================================
-# USER ALERT SETTINGS
-# ==========================================================
-
-ENABLE_USER_ALERTS = True
-
-MAX_USERS = 100000
-
-
-# ==========================================================
-# LOGGING
-# ==========================================================
-
-LOG_LEVEL = os.getenv(
-    "LOG_LEVEL",
-    "INFO"
-).upper()
-
-
-# ==========================================================
-# APPLICATION INFORMATION
-# ==========================================================
-
-APP_NAME = "World Breaking News Bot"
-
-VERSION = "3.0.0"
-
-
-# ==========================================================
-# STARTUP INFORMATION
-# ==========================================================
-
-print(
-    "World Breaking News Bot configuration loaded."
-)
-
-print(
-    f"News check interval: {CHECK_INTERVAL} seconds"
-)
-
-print(
-    f"Maximum articles per feed: {MAX_ARTICLES_PER_FEED}"
-)
-
-print(
-    f"Database: {DATABASE_PATH}"
-)
-
-if ADMIN_ID:
-    print(
-        f"Admin ID configured: {ADMIN_ID}"
-else:
-    print(
-        "WARNING: ADMIN_ID is not configured."
+except TelegramBadRequest as exc:
+    logger.error(
+        "CHANNEL ERROR | channel=%s | error=%s",
+        channel_id,
+        exc,
     )
+    return False
+
+except TelegramForbiddenError as exc:
+    logger.error(
+        "BOT HAS NO PERMISSION | channel=%s | error=%s",
+        channel_id,
+        exc,
+    )
+    return False
+
+except Exception as exc:
+    logger.exception(
+        "POST FAILED | channel=%s | error=%s",
+        channel_id,
+        exc,
+    )
+    return False
