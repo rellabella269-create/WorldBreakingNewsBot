@@ -10,7 +10,7 @@ from config import (
     BOT_TOKEN,
     CHECK_INTERVAL,
     MAX_STORED_ARTICLES,
-    NEWS_CHANNEL,
+    NEWS_CHANNELS,
 )
 from database import db
 from formatter import format_news_post
@@ -35,25 +35,197 @@ logger = logging.getLogger(__name__)
 
 
 # ==========================================================
-# NEWS POSTING LOOP
+# SETTINGS FOR MANY CHANNELS
 # ==========================================================
 
-async def news_publishing_loop(bot: Bot):
+# Small delay between channel posts.
+# This helps avoid sending a huge burst of requests.
+CHANNEL_SEND_DELAY = 0.15
+
+# Maximum number of retry attempts for a failed post.
+MAX_RETRIES = 3
+
+
+# ==========================================================
+# SEND ARTICLE TO ONE CHANNEL
+# ==========================================================
+
+async def send_article_to_channel(
+    bot: Bot,
+    article,
+    channel_id: str,
+    message: str,
+) -> bool:
     """
-    Continuously checks configured news feeds and publishes
-    new stories to the main Telegram channel.
+    Send one article to one Telegram channel.
+
+    Returns:
+        True  = successfully posted
+        False = failed
+    """
+
+    # ------------------------------------------------------
+    # ALREADY POSTED?
+    # ------------------------------------------------------
+
+    if db.news_exists(
+        article.article_id,
+        str(channel_id),
+    ):
+        return True
+
+    # ------------------------------------------------------
+    # RETRIES
+    # ------------------------------------------------------
+
+    for attempt in range(
+        1,
+        MAX_RETRIES + 1,
+    ):
+        try:
+            await bot.send_message(
+                chat_id=channel_id,
+                text=message,
+                parse_mode="HTML",
+                disable_web_page_preview=False,
+            )
+
+            # ------------------------------------------------
+            # SAVE SUCCESSFUL POST
+            # ------------------------------------------------
+
+            db.add_news(
+                article_id=article.article_id,
+                channel_id=str(channel_id),
+                title=article.title,
+                link=article.link,
+                source=article.source,
+                category=article.category,
+            )
+
+            logger.info(
+                "SUCCESS | %s | %s",
+                channel_id,
+                article.title,
+            )
+
+            return True
+
+        except Exception as exc:
+            logger.warning(
+                "FAILED | channel=%s | attempt=%d/%d | %s",
+                channel_id,
+                attempt,
+                MAX_RETRIES,
+                exc,
+            )
+
+            if attempt < MAX_RETRIES:
+                await asyncio.sleep(
+                    1.5 * attempt
+                )
+
+    logger.error(
+        "PERMANENT FAILURE | channel=%s | article=%s",
+        channel_id,
+        article.title,
+    )
+
+    return False
+
+
+# ==========================================================
+# SEND ARTICLE TO ALL CHANNELS
+# ==========================================================
+
+async def publish_article_to_all_channels(
+    bot: Bot,
+    article,
+) -> tuple[int, int]:
+    """
+    Publish one article to every configured channel.
+
+    Returns:
+        (successful_posts, failed_posts)
+    """
+
+    message = format_news_post(
+        article
+    )
+
+    success_count = 0
+    failed_count = 0
+
+    logger.info(
+        "Publishing article to %d channel(s): %s",
+        len(NEWS_CHANNELS),
+        article.title,
+    )
+
+    for channel_id in NEWS_CHANNELS:
+
+        success = await send_article_to_channel(
+            bot=bot,
+            article=article,
+            channel_id=channel_id,
+            message=message,
+        )
+
+        if success:
+            success_count += 1
+        else:
+            failed_count += 1
+
+        # --------------------------------------------------
+        # DELAY BETWEEN CHANNEL REQUESTS
+        # --------------------------------------------------
+
+        await asyncio.sleep(
+            CHANNEL_SEND_DELAY
+        )
+
+    return (
+        success_count,
+        failed_count,
+    )
+
+
+# ==========================================================
+# NEWS PUBLISHING LOOP
+# ==========================================================
+
+async def news_publishing_loop(
+    bot: Bot,
+):
+    """
+    Continuously check news feeds and publish new articles
+    to all configured Telegram channels.
     """
 
     logger.info(
-        "News publishing system started."
+        "=========================================="
     )
 
     logger.info(
-        "Target channel: %s",
-        NEWS_CHANNEL,
+        "NEWS PUBLISHING SYSTEM STARTED"
+    )
+
+    logger.info(
+        "Configured channels: %d",
+        len(NEWS_CHANNELS),
+    )
+
+    logger.info(
+        "Check interval: %d seconds",
+        CHECK_INTERVAL,
+    )
+
+    logger.info(
+        "=========================================="
     )
 
     while True:
+
         try:
             logger.info(
                 "Checking for new news..."
@@ -65,88 +237,124 @@ async def news_publishing_loop(bot: Bot):
                 logger.info(
                     "No articles found."
                 )
+
             else:
-                posted_count = 0
+
+                logger.info(
+                    "Found %d article(s).",
+                    len(articles),
+                )
+
+                # --------------------------------------------------
+                # PROCESS ARTICLES
+                # --------------------------------------------------
 
                 for article in articles:
 
-                    # --------------------------------------------------
-                    # DUPLICATE CHECK
-                    # --------------------------------------------------
+                    # ------------------------------------------------
+                    # CHECK WHETHER EVERY CHANNEL ALREADY RECEIVED IT
+                    # ------------------------------------------------
 
-                    if db.news_exists(
-                        article.article_id
-                    ):
+                    posted_channels = set(
+                        db.get_posted_channels(
+                            article.article_id
+                        )
+                    )
+
+                    all_channels = {
+                        str(channel)
+                        for channel in NEWS_CHANNELS
+                    }
+
+                    remaining_channels = (
+                        all_channels - posted_channels
+                    )
+
+                    # ------------------------------------------------
+                    # EVERYTHING ALREADY POSTED
+                    # ------------------------------------------------
+
+                    if not remaining_channels:
+                        logger.info(
+                            "Already posted everywhere: %s",
+                            article.title,
+                        )
                         continue
 
-                    # --------------------------------------------------
-                    # FORMAT NEWS
-                    # --------------------------------------------------
+                    logger.info(
+                        "Article needs posting to %d channel(s): %s",
+                        len(remaining_channels),
+                        article.title,
+                    )
+
+                    # ------------------------------------------------
+                    # FORMAT ONCE
+                    # ------------------------------------------------
 
                     message = format_news_post(
                         article
                     )
 
-                    # --------------------------------------------------
-                    # POST TO CHANNEL
-                    # --------------------------------------------------
+                    success_count = 0
+                    failed_count = 0
 
-                    try:
-                        await bot.send_message(
-                            chat_id=NEWS_CHANNEL,
-                            text=message,
-                            parse_mode="HTML",
-                            disable_web_page_preview=False,
+                    # ------------------------------------------------
+                    # POST TO REMAINING CHANNELS
+                    # ------------------------------------------------
+
+                    for channel_id in NEWS_CHANNELS:
+
+                        channel_id = str(
+                            channel_id
                         )
 
-                        # ------------------------------------------------
-                        # SAVE ONLY AFTER SUCCESSFUL POST
-                        # ------------------------------------------------
+                        # Skip channels that already received it.
+                        if channel_id in posted_channels:
+                            continue
 
-                        db.add_news(
-                            article_id=article.article_id,
-                            title=article.title,
-                            link=article.link,
-                            source=article.source,
-                            category=article.category,
+                        success = await send_article_to_channel(
+                            bot=bot,
+                            article=article,
+                            channel_id=channel_id,
+                            message=message,
                         )
 
-                        posted_count += 1
+                        if success:
+                            success_count += 1
+                        else:
+                            failed_count += 1
 
-                        logger.info(
-                            "Posted news: %s",
-                            article.title,
+                        await asyncio.sleep(
+                            CHANNEL_SEND_DELAY
                         )
 
-                        # Small delay between posts so the channel
-                        # does not get flooded when many stories arrive.
-                        await asyncio.sleep(2)
+                    # ------------------------------------------------
+                    # SUMMARY
+                    # ------------------------------------------------
 
-                    except Exception as exc:
-                        logger.exception(
-                            "Failed to post article '%s': %s",
-                            article.title,
-                            exc,
-                        )
-
-                if posted_count:
                     logger.info(
-                        "Posted %d new article(s).",
-                        posted_count,
-                    )
-                else:
-                    logger.info(
-                        "No new articles to publish."
+                        "ARTICLE COMPLETE | "
+                        "success=%d | failed=%d | title=%s",
+                        success_count,
+                        failed_count,
+                        article.title,
                     )
 
-            # ----------------------------------------------------------
+                    # ------------------------------------------------
+                    # SMALL BREAK BEFORE NEXT ARTICLE
+                    # ------------------------------------------------
+
+                    await asyncio.sleep(1)
+
+            # ------------------------------------------------------
             # DATABASE CLEANUP
-            # ----------------------------------------------------------
+            # ------------------------------------------------------
 
             try:
                 db.cleanup_old_news(
                     keep_count=MAX_STORED_ARTICLES
                 )
+
             except Exception as exc:
                 logger.exception(
                     "Database cleanup failed: %s",
@@ -159,9 +367,9 @@ async def news_publishing_loop(bot: Bot):
                 exc,
             )
 
-        # --------------------------------------------------------------
-        # WAIT BEFORE NEXT CHECK
-        # --------------------------------------------------------------
+        # ----------------------------------------------------------
+        # WAIT UNTIL NEXT CHECK
+        # ----------------------------------------------------------
 
         await asyncio.sleep(
             CHECK_INTERVAL
@@ -173,21 +381,32 @@ async def news_publishing_loop(bot: Bot):
 # ==========================================================
 
 async def main():
-    """
-    Start the Telegram bot and the automatic news publisher.
-    """
 
     logger.info(
         "=========================================="
     )
 
     logger.info(
-        "Starting World Breaking News Bot"
+        "WORLD BREAKING NEWS BOT"
     )
 
     logger.info(
         "=========================================="
     )
+
+    # ------------------------------------------------------
+    # SHOW CHANNEL COUNT
+    # ------------------------------------------------------
+
+    logger.info(
+        "Loaded %d Telegram channels.",
+        len(NEWS_CHANNELS),
+    )
+
+    if len(NEWS_CHANNELS) > 100:
+        logger.info(
+            "100+ channel mode enabled."
+        )
 
     # ------------------------------------------------------
     # REGISTER ADMIN COMMANDS
@@ -199,7 +418,7 @@ async def main():
         )
 
     # ------------------------------------------------------
-    # CREATE BOT
+    # CREATE TELEGRAM BOT
     # ------------------------------------------------------
 
     bot = Bot(
@@ -207,14 +426,15 @@ async def main():
     )
 
     # ------------------------------------------------------
-    # TEST BOT CONNECTION
+    # TEST TELEGRAM CONNECTION
     # ------------------------------------------------------
 
     try:
+
         bot_info = await bot.get_me()
 
         logger.info(
-            "Bot connected successfully."
+            "Telegram connection successful."
         )
 
         logger.info(
@@ -222,7 +442,13 @@ async def main():
             bot_info.username,
         )
 
+        logger.info(
+            "Bot ID: %s",
+            bot_info.id,
+        )
+
     except Exception as exc:
+
         logger.exception(
             "Could not connect to Telegram: %s",
             exc,
@@ -233,21 +459,27 @@ async def main():
         raise
 
     # ------------------------------------------------------
-    # START NEWS TASK
+    # START NEWS SYSTEM
     # ------------------------------------------------------
 
     news_task = asyncio.create_task(
-        news_publishing_loop(bot)
+        news_publishing_loop(
+            bot
+        )
     )
 
     try:
+
         # --------------------------------------------------
-        # START TELEGRAM POLLING
+        # START TELEGRAM BOT
         # --------------------------------------------------
 
-        await dp.start_polling(bot)
+        await dp.start_polling(
+            bot
+        )
 
     finally:
+
         # --------------------------------------------------
         # STOP NEWS TASK
         # --------------------------------------------------
@@ -260,7 +492,7 @@ async def main():
             await news_task
 
         # --------------------------------------------------
-        # CLOSE BOT SESSION
+        # CLOSE TELEGRAM SESSION
         # --------------------------------------------------
 
         await bot.session.close()
@@ -275,10 +507,15 @@ async def main():
 # ==========================================================
 
 if __name__ == "__main__":
+
     try:
-        asyncio.run(main())
+
+        asyncio.run(
+            main()
+        )
 
     except KeyboardInterrupt:
+
         logger.info(
             "Application stopped manually."
         )
