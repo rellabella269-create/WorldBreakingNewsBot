@@ -22,7 +22,7 @@ BOT_TOKEN = os.getenv(
 if not BOT_TOKEN:
     raise ValueError(
         "BOT_TOKEN is missing. "
-        "Add BOT_TOKEN to your Railway Variables."
+        "Add BOT_TOKEN to Railway Variables."
     )
 
 
@@ -42,88 +42,52 @@ except ValueError:
 
 
 # ==========================================================
-# 100+ TELEGRAM CHANNELS
-# ==========================================================
-
-NEWS_CHANNELS_RAW = os.getenv(
-    "NEWS_CHANNELS",
-    ""
-).strip()
-
-
-def parse_channels(value: str):
-    """
-    Convert a comma-separated channel list into a clean list.
-
-    Examples:
-
-    @channelone,@channeltwo
-
-    or
-
-    -1001234567890,-1009876543210
-    """
-
-    channels = []
-
-    for item in value.split(","):
-
-        channel = item.strip()
-
-        if not channel:
-            continue
-
-        if channel not in channels:
-            channels.append(channel)
-
-    return channels
-
-
-NEWS_CHANNELS = parse_channels(
-    NEWS_CHANNELS_RAW
-)
-
-
-if not NEWS_CHANNELS:
-    raise ValueError(
-        "NEWS_CHANNELS is missing. "
-        "Add at least one Telegram channel username "
-        "or numeric channel ID."
-    )
-
-
-# ==========================================================
 # NEWS CHECK SETTINGS
 # ==========================================================
 
-CHECK_INTERVAL = int(
-    os.getenv(
-        "CHECK_INTERVAL",
-        "30"
+CHECK_INTERVAL_RAW = os.getenv(
+    "CHECK_INTERVAL",
+    "30"
+).strip()
+
+try:
+    CHECK_INTERVAL = int(
+        CHECK_INTERVAL_RAW
     )
-)
+except ValueError:
+    CHECK_INTERVAL = 30
 
 if CHECK_INTERVAL < 10:
     CHECK_INTERVAL = 10
 
 
-MAX_ARTICLES_PER_FEED = int(
-    os.getenv(
-        "MAX_ARTICLES_PER_FEED",
-        "10"
+MAX_ARTICLES_PER_FEED_RAW = os.getenv(
+    "MAX_ARTICLES_PER_FEED",
+    "10"
+).strip()
+
+try:
+    MAX_ARTICLES_PER_FEED = int(
+        MAX_ARTICLES_PER_FEED_RAW
     )
-)
+except ValueError:
+    MAX_ARTICLES_PER_FEED = 10
 
 if MAX_ARTICLES_PER_FEED < 1:
     MAX_ARTICLES_PER_FEED = 1
 
 
-MAX_STORED_ARTICLES = int(
-    os.getenv(
-        "MAX_STORED_ARTICLES",
-        "5000"
+MAX_STORED_ARTICLES_RAW = os.getenv(
+    "MAX_STORED_ARTICLES",
+    "5000"
+).strip()
+
+try:
+    MAX_STORED_ARTICLES = int(
+        MAX_STORED_ARTICLES_RAW
     )
-)
+except ValueError:
+    MAX_STORED_ARTICLES = 5000
 
 if MAX_STORED_ARTICLES < 100:
     MAX_STORED_ARTICLES = 100
@@ -137,6 +101,9 @@ DATABASE_PATH = os.getenv(
     "DATABASE_PATH",
     "data/news.db"
 ).strip()
+
+if not DATABASE_PATH:
+    DATABASE_PATH = "data/news.db"
 
 
 # ==========================================================
@@ -157,7 +124,6 @@ NEWS_FEEDS = [
 # ==========================================================
 
 CATEGORY_KEYWORDS = {
-
     "World": [
         "world",
         "international",
@@ -255,7 +221,6 @@ CATEGORY_KEYWORDS = {
 # ==========================================================
 
 CATEGORY_HASHTAGS = {
-
     "World":
         "#WorldNews #BreakingNews",
 
@@ -315,16 +280,7 @@ LOG_LEVEL = os.getenv(
 
 APP_NAME = "World Breaking News Bot"
 
-VERSION = "2.0.0"
-
-
-# ==========================================================
-# CHANNEL INFORMATION
-# ==========================================================
-
-CHANNEL_COUNT = len(
-    NEWS_CHANNELS
-)
+VERSION = "3.0.0"
 
 
 # ==========================================================
@@ -332,10 +288,25 @@ CHANNEL_COUNT = len(
 # ==========================================================
 
 print(
-    f"Loaded {CHANNEL_COUNT} Telegram channel(s)."
+    "World Breaking News Bot configuration loaded."
 )
 
-if CHANNEL_COUNT >= 100:
+print(
+    f"News check interval: {CHECK_INTERVAL} seconds"
+)
+
+print(
+    f"Maximum articles per feed: {MAX_ARTICLES_PER_FEED}"
+)
+
+print(
+    f"Database: {DATABASE_PATH}"
+)
+
+if ADMIN_ID:
     print(
-        "100+ channel mode enabled."
+        f"Admin ID configured: {ADMIN_ID}"
+else:
+    print(
+        "WARNING: ADMIN_ID is not configured."
     )
