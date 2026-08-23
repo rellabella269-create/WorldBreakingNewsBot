@@ -1,3 +1,4 @@
+import html
 import logging
 from typing import Optional
 
@@ -10,7 +11,7 @@ from aiogram.types import (
     Message,
 )
 
-from config import NEWS_CHANNEL
+from config import NEWS_CHANNELS
 from database import db
 from formatter import (
     format_admin_stats,
@@ -36,41 +37,79 @@ dp = Dispatcher()
 
 
 # ==========================================================
-# KEYBOARD
+# CHANNEL LINK
+# ==========================================================
+
+def get_main_channel_url() -> Optional[str]:
+    """
+    Returns a usable public-channel URL when the first
+    configured channel is a username such as @MyChannel.
+
+    Numeric channel IDs cannot be converted into public
+    t.me links automatically.
+    """
+
+    if not NEWS_CHANNELS:
+        return None
+
+    channel = str(NEWS_CHANNELS[0]).strip()
+
+    if channel.startswith("@"):
+        username = channel[1:].strip()
+
+        if username:
+            return f"https://t.me/{username}"
+
+    return None
+
+
+# ==========================================================
+# MAIN KEYBOARD
 # ==========================================================
 
 def main_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="📰 Latest News",
-                    callback_data="latest_news",
-                ),
-            ],
-            [
-                InlineKeyboardButton(
-                    text="🔔 Enable Alerts",
-                    callback_data="enable_alerts",
-                ),
-                InlineKeyboardButton(
-                    text="🔕 Disable Alerts",
-                    callback_data="disable_alerts",
-                ),
-            ],
+    buttons = [
+        [
+            InlineKeyboardButton(
+                text="📰 Latest News",
+                callback_data="latest_news",
+            ),
+        ],
+        [
+            InlineKeyboardButton(
+                text="🔔 Enable Alerts",
+                callback_data="enable_alerts",
+            ),
+            InlineKeyboardButton(
+                text="🔕 Disable Alerts",
+                callback_data="disable_alerts",
+            ),
+        ],
+    ]
+
+    channel_url = get_main_channel_url()
+
+    if channel_url:
+        buttons.append(
             [
                 InlineKeyboardButton(
                     text="📢 News Channel",
-                    url=f"https://t.me/{NEWS_CHANNEL.lstrip('@')}",
+                    url=channel_url,
                 ),
-            ],
-            [
-                InlineKeyboardButton(
-                    text="ℹ️ Help",
-                    callback_data="help",
-                ),
-            ],
+            ]
+        )
+
+    buttons.append(
+        [
+            InlineKeyboardButton(
+                text="ℹ️ Help",
+                callback_data="help",
+            ),
         ]
+    )
+
+    return InlineKeyboardMarkup(
+        inline_keyboard=buttons
     )
 
 
@@ -80,14 +119,23 @@ def main_keyboard() -> InlineKeyboardMarkup:
 
 @dp.message(CommandStart())
 async def start_handler(message: Message):
+
+    if not message.from_user:
+        return
+
     user_id = message.from_user.id
 
     db.add_user(user_id)
 
-    first_name = message.from_user.first_name
+    first_name = (
+        message.from_user.first_name
+        or ""
+    )
 
     await message.answer(
-        format_welcome_message(first_name),
+        format_welcome_message(
+            first_name
+        ),
         reply_markup=main_keyboard(),
     )
 
@@ -98,6 +146,7 @@ async def start_handler(message: Message):
 
 @dp.message(Command("help"))
 async def help_handler(message: Message):
+
     await message.answer(
         format_help_message(),
         reply_markup=main_keyboard(),
@@ -110,15 +159,24 @@ async def help_handler(message: Message):
 
 @dp.message(Command("news"))
 async def news_handler(message: Message):
-    await send_latest_news(message)
+
+    await send_latest_news(
+        message
+    )
 
 
 # ==========================================================
-# ENABLE ALERTS COMMAND
+# ENABLE ALERTS
 # ==========================================================
 
 @dp.message(Command("on"))
-async def enable_alerts_handler(message: Message):
+async def enable_alerts_handler(
+    message: Message,
+):
+
+    if not message.from_user:
+        return
+
     user_id = message.from_user.id
 
     db.add_user(user_id)
@@ -131,11 +189,17 @@ async def enable_alerts_handler(message: Message):
 
 
 # ==========================================================
-# DISABLE ALERTS COMMAND
+# DISABLE ALERTS
 # ==========================================================
 
 @dp.message(Command("off"))
-async def disable_alerts_handler(message: Message):
+async def disable_alerts_handler(
+    message: Message,
+):
+
+    if not message.from_user:
+        return
+
     user_id = message.from_user.id
 
     db.disable_alerts(user_id)
@@ -147,83 +211,123 @@ async def disable_alerts_handler(message: Message):
 
 
 # ==========================================================
-# LATEST NEWS FUNCTION
+# SEND LATEST NEWS
 # ==========================================================
 
-async def send_latest_news(message: Message):
+async def send_latest_news(
+    message: Message,
+):
+
     try:
+
         articles = get_latest_news()
 
         if not articles:
+
             await message.answer(
-                "📰 <b>No new stories are available "
+                "📰 <b>No recent stories are available "
                 "right now.</b>\n\n"
-                "Please check again shortly.",
+                "Please try again shortly.",
                 reply_markup=main_keyboard(),
             )
+
             return
 
-        # Show only a few stories to avoid flooding the user.
+        # Keep the bot from flooding a user.
         articles = articles[:5]
 
         for article in articles:
+
             await message.answer(
-                _format_simple_news(
-                    article.title,
-                    article.summary,
-                    article.source,
-                    article.link,
-                )
+                format_user_news(
+                    article
+                ),
+                disable_web_page_preview=False,
             )
 
+            # Small delay between messages.
+            import asyncio
+
+            await asyncio.sleep(0.5)
+
         await message.answer(
-            "✅ That's the latest available news "
-            "from the configured sources.",
+            "✅ <b>That's the latest available news.</b>",
             reply_markup=main_keyboard(),
         )
 
     except Exception as exc:
+
         logger.exception(
-            "Error while getting latest news: %s",
+            "Failed to retrieve latest news: %s",
             exc,
         )
 
         await message.answer(
-            "⚠️ I couldn't retrieve the latest news "
-            "right now. Please try again shortly.",
+            "⚠️ <b>Unable to retrieve the latest "
+            "news right now.</b>\n\n"
+            "Please try again shortly.",
             reply_markup=main_keyboard(),
         )
 
 
 # ==========================================================
-# SIMPLE NEWS FORMAT
+# FORMAT USER NEWS
 # ==========================================================
 
-def _format_simple_news(
-    title: str,
-    summary: str,
-    source: str,
-    link: str,
+def format_user_news(
+    article,
 ) -> str:
 
-    import html
+    title = html.escape(
+        article.title or ""
+    )
 
-    title = html.escape(title or "")
-    summary = html.escape(summary or "")
-    source = html.escape(source or "")
-    link = html.escape(link or "", quote=True)
+    summary = html.escape(
+        article.summary or ""
+    )
 
-    text = f"📰 <b>{title}</b>\n\n"
+    source = html.escape(
+        article.source or ""
+    )
+
+    link = html.escape(
+        article.link or "",
+        quote=True,
+    )
+
+    text = (
+        f"📰 <b>{title}</b>\n\n"
+    )
 
     if summary:
-        text += f"{summary}\n\n"
+
+        # Keep direct bot replies shorter.
+        if len(summary) > 700:
+            summary = (
+                summary[:697].rsplit(
+                    " ",
+                    1
+                )[0]
+                + "..."
+            )
+
+        text += (
+            f"{summary}\n\n"
+        )
 
     if source:
-        text += f"📌 <b>Source:</b> {source}\n\n"
+
+        text += (
+            f"📌 <b>Source:</b> "
+            f"{source}\n\n"
+        )
 
     if link:
+
         text += (
-            f'🔗 <a href="{link}">Read Full Story</a>'
+            f'🔗 <a href="{link}">'
+            f"Read Full Story"
+            f"</a>"
         )
 
     return text
@@ -239,9 +343,11 @@ def _format_simple_news(
 async def latest_news_callback(
     callback: CallbackQuery,
 ):
+
     await callback.answer()
 
     if callback.message:
+
         await send_latest_news(
             callback.message
         )
@@ -257,6 +363,7 @@ async def latest_news_callback(
 async def enable_alerts_callback(
     callback: CallbackQuery,
 ):
+
     user_id = callback.from_user.id
 
     db.add_user(user_id)
@@ -267,6 +374,7 @@ async def enable_alerts_callback(
     )
 
     if callback.message:
+
         await callback.message.answer(
             format_alert_status(True),
             reply_markup=main_keyboard(),
@@ -283,6 +391,7 @@ async def enable_alerts_callback(
 async def disable_alerts_callback(
     callback: CallbackQuery,
 ):
+
     user_id = callback.from_user.id
 
     db.add_user(user_id)
@@ -293,6 +402,7 @@ async def disable_alerts_callback(
     )
 
     if callback.message:
+
         await callback.message.answer(
             format_alert_status(False),
             reply_markup=main_keyboard(),
@@ -309,9 +419,11 @@ async def disable_alerts_callback(
 async def help_callback(
     callback: CallbackQuery,
 ):
+
     await callback.answer()
 
     if callback.message:
+
         await callback.message.answer(
             format_help_message(),
             reply_markup=main_keyboard(),
@@ -319,26 +431,28 @@ async def help_callback(
 
 
 # ==========================================================
-# ADMIN STATS
+# ADMIN COMMANDS
 # ==========================================================
 
-def register_admin_handlers(admin_id: int):
-    """
-    Register admin-only commands.
-
-    This function is called from main.py so that the
-    configured ADMIN_ID controls access.
-    """
+def register_admin_handlers(
+    admin_id: int,
+):
 
     @dp.message(Command("stats"))
     async def stats_handler(
         message: Message,
     ):
+
+        if not message.from_user:
+            return
+
         if message.from_user.id != admin_id:
+
             await message.answer(
                 "❌ You are not authorized "
                 "to use this command."
             )
+
             return
 
         user_count = db.get_user_count()
@@ -349,14 +463,49 @@ def register_admin_handlers(admin_id: int):
             )
         )
 
+    @dp.message(Command("channels"))
+    async def channels_handler(
+        message: Message,
+    ):
+
+        if not message.from_user:
+            return
+
+        if message.from_user.id != admin_id:
+
+            await message.answer(
+                "❌ You are not authorized "
+                "to use this command."
+            )
+
+            return
+
+        count = len(
+            NEWS_CHANNELS
+        )
+
+        await message.answer(
+            "📢 <b>Channel Configuration</b>\n\n"
+            f"Total configured channels: "
+            f"<b>{count}</b>\n\n"
+            "The news publisher will attempt "
+            "to post new articles to every "
+            "configured channel."
+        )
+
 
 # ==========================================================
 # BOT RUNNER
 # ==========================================================
 
-async def run_bot(bot: Bot):
+async def run_bot(
+    bot: Bot,
+):
+
     logger.info(
         "Telegram bot polling started."
     )
 
-    await dp.start_polling(bot)
+    await dp.start_polling(
+        bot
+    )
