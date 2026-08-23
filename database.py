@@ -1,6 +1,7 @@
 import os
 import sqlite3
 from datetime import datetime, timezone
+from typing import Optional, List
 
 from config import DATABASE_PATH
 
@@ -20,6 +21,7 @@ if db_folder:
 # ==========================================================
 
 class Database:
+
     def __init__(self, db_path: str = DATABASE_PATH):
         self.db_path = db_path
         self._create_tables()
@@ -43,6 +45,7 @@ class Database:
     # ======================================================
 
     def _create_tables(self):
+
         connection = self.connect()
 
         try:
@@ -50,18 +53,26 @@ class Database:
 
             # ------------------------------------------------
             # POSTED NEWS
+            #
+            # IMPORTANT:
+            # article_id + channel_id are unique together.
+            # This allows the same article to be posted to
+            # many different Telegram channels.
             # ------------------------------------------------
 
             cursor.execute(
                 """
                 CREATE TABLE IF NOT EXISTS posted_news (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    article_id TEXT NOT NULL UNIQUE,
+                    article_id TEXT NOT NULL,
+                    channel_id TEXT NOT NULL,
                     title TEXT,
                     link TEXT,
                     source TEXT,
                     category TEXT,
-                    posted_at TEXT NOT NULL
+                    posted_at TEXT NOT NULL,
+
+                    UNIQUE(article_id, channel_id)
                 )
                 """
             )
@@ -81,7 +92,7 @@ class Database:
             )
 
             # ------------------------------------------------
-            # BOT SETTINGS
+            # SETTINGS
             # ------------------------------------------------
 
             cursor.execute(
@@ -93,16 +104,49 @@ class Database:
                 """
             )
 
+            # ------------------------------------------------
+            # INDEXES
+            # ------------------------------------------------
+
+            cursor.execute(
+                """
+                CREATE INDEX IF NOT EXISTS
+                idx_posted_news_article
+                ON posted_news(article_id)
+                """
+            )
+
+            cursor.execute(
+                """
+                CREATE INDEX IF NOT EXISTS
+                idx_posted_news_channel
+                ON posted_news(channel_id)
+                """
+            )
+
+            cursor.execute(
+                """
+                CREATE INDEX IF NOT EXISTS
+                idx_posted_news_time
+                ON posted_news(posted_at)
+                """
+            )
+
             connection.commit()
 
         finally:
             connection.close()
 
     # ======================================================
-    # NEWS
+    # CHECK IF ARTICLE WAS POSTED TO A SPECIFIC CHANNEL
     # ======================================================
 
-    def news_exists(self, article_id: str) -> bool:
+    def news_exists(
+        self,
+        article_id: str,
+        channel_id: str
+    ) -> bool:
+
         connection = self.connect()
 
         try:
@@ -113,9 +157,13 @@ class Database:
                 SELECT 1
                 FROM posted_news
                 WHERE article_id = ?
+                  AND channel_id = ?
                 LIMIT 1
                 """,
-                (article_id,)
+                (
+                    article_id,
+                    str(channel_id)
+                )
             )
 
             return cursor.fetchone() is not None
@@ -124,15 +172,52 @@ class Database:
             connection.close()
 
     # ======================================================
+    # CHECK WHICH CHANNELS ALREADY RECEIVED AN ARTICLE
+    # ======================================================
+
+    def get_posted_channels(
+        self,
+        article_id: str
+    ) -> List[str]:
+
+        connection = self.connect()
+
+        try:
+            cursor = connection.cursor()
+
+            cursor.execute(
+                """
+                SELECT channel_id
+                FROM posted_news
+                WHERE article_id = ?
+                """,
+                (article_id,)
+            )
+
+            rows = cursor.fetchall()
+
+            return [
+                str(row["channel_id"])
+                for row in rows
+            ]
+
+        finally:
+            connection.close()
+
+    # ======================================================
+    # ADD SUCCESSFUL CHANNEL POST
+    # ======================================================
 
     def add_news(
         self,
         article_id: str,
+        channel_id: str,
         title: str = "",
         link: str = "",
         source: str = "",
         category: str = "World"
     ) -> bool:
+
         connection = self.connect()
 
         try:
@@ -147,16 +232,18 @@ class Database:
                 INSERT OR IGNORE INTO posted_news
                 (
                     article_id,
+                    channel_id,
                     title,
                     link,
                     source,
                     category,
                     posted_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     article_id,
+                    str(channel_id),
                     title,
                     link,
                     source,
@@ -173,8 +260,14 @@ class Database:
             connection.close()
 
     # ======================================================
+    # GET RECENT NEWS POSTS
+    # ======================================================
 
-    def get_recent_news(self, limit: int = 100):
+    def get_recent_news(
+        self,
+        limit: int = 100
+    ):
+
         connection = self.connect()
 
         try:
@@ -184,6 +277,7 @@ class Database:
                 """
                 SELECT
                     article_id,
+                    channel_id,
                     title,
                     link,
                     source,
@@ -202,8 +296,14 @@ class Database:
             connection.close()
 
     # ======================================================
+    # CLEAN OLD DATABASE ENTRIES
+    # ======================================================
 
-    def cleanup_old_news(self, keep_count: int = 5000):
+    def cleanup_old_news(
+        self,
+        keep_count: int = 5000
+    ):
+
         connection = self.connect()
 
         try:
@@ -231,7 +331,11 @@ class Database:
     # USERS
     # ======================================================
 
-    def add_user(self, user_id: int):
+    def add_user(
+        self,
+        user_id: int
+    ):
+
         connection = self.connect()
 
         try:
@@ -250,6 +354,7 @@ class Database:
                     alerts_enabled
                 )
                 VALUES (?, ?, 1)
+
                 ON CONFLICT(user_id)
                 DO UPDATE SET
                     alerts_enabled = 1
@@ -267,7 +372,20 @@ class Database:
 
     # ======================================================
 
-    def remove_user(self, user_id: int):
+    def remove_user(
+        self,
+        user_id: int
+    ):
+
+        self.disable_alerts(user_id)
+
+    # ======================================================
+
+    def enable_alerts(
+        self,
+        user_id: int
+    ):
+
         connection = self.connect()
 
         try:
@@ -275,11 +393,24 @@ class Database:
 
             cursor.execute(
                 """
-                UPDATE users
-                SET alerts_enabled = 0
-                WHERE user_id = ?
+                INSERT INTO users
+                (
+                    user_id,
+                    joined_at,
+                    alerts_enabled
+                )
+                VALUES (?, ?, 1)
+
+                ON CONFLICT(user_id)
+                DO UPDATE SET
+                    alerts_enabled = 1
                 """,
-                (user_id,)
+                (
+                    user_id,
+                    datetime.now(
+                        timezone.utc
+                    ).isoformat()
+                )
             )
 
             connection.commit()
@@ -289,7 +420,11 @@ class Database:
 
     # ======================================================
 
-    def enable_alerts(self, user_id: int):
+    def disable_alerts(
+        self,
+        user_id: int
+    ):
+
         connection = self.connect()
 
         try:
@@ -297,11 +432,24 @@ class Database:
 
             cursor.execute(
                 """
-                UPDATE users
-                SET alerts_enabled = 1
-                WHERE user_id = ?
+                INSERT INTO users
+                (
+                    user_id,
+                    joined_at,
+                    alerts_enabled
+                )
+                VALUES (?, ?, 0)
+
+                ON CONFLICT(user_id)
+                DO UPDATE SET
+                    alerts_enabled = 0
                 """,
-                (user_id,)
+                (
+                    user_id,
+                    datetime.now(
+                        timezone.utc
+                    ).isoformat()
+                )
             )
 
             connection.commit()
@@ -310,30 +458,11 @@ class Database:
             connection.close()
 
     # ======================================================
-
-    def disable_alerts(self, user_id: int):
-        connection = self.connect()
-
-        try:
-            cursor = connection.cursor()
-
-            cursor.execute(
-                """
-                UPDATE users
-                SET alerts_enabled = 0
-                WHERE user_id = ?
-                """,
-                (user_id,)
-            )
-
-            connection.commit()
-
-        finally:
-            connection.close()
-
+    # GET ACTIVE USERS
     # ======================================================
 
-    def get_active_users(self):
+    def get_active_users(self) -> List[int]:
+
         connection = self.connect()
 
         try:
@@ -350,7 +479,7 @@ class Database:
             rows = cursor.fetchall()
 
             return [
-                row["user_id"]
+                int(row["user_id"])
                 for row in rows
             ]
 
@@ -358,8 +487,14 @@ class Database:
             connection.close()
 
     # ======================================================
+    # CHECK USER
+    # ======================================================
 
-    def user_exists(self, user_id: int) -> bool:
+    def user_exists(
+        self,
+        user_id: int
+    ) -> bool:
+
         connection = self.connect()
 
         try:
@@ -385,6 +520,7 @@ class Database:
     # ======================================================
 
     def get_user_count(self) -> int:
+
         connection = self.connect()
 
         try:
@@ -408,7 +544,12 @@ class Database:
     # SETTINGS
     # ======================================================
 
-    def set_setting(self, key: str, value: str):
+    def set_setting(
+        self,
+        key: str,
+        value: str
+    ):
+
         connection = self.connect()
 
         try:
@@ -422,8 +563,10 @@ class Database:
                     value
                 )
                 VALUES (?, ?)
+
                 ON CONFLICT(key)
-                DO UPDATE SET value = excluded.value
+                DO UPDATE SET
+                    value = excluded.value
                 """,
                 (
                     key,
@@ -441,8 +584,9 @@ class Database:
     def get_setting(
         self,
         key: str,
-        default=None
+        default: Optional[str] = None
     ):
+
         connection = self.connect()
 
         try:
